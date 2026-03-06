@@ -7,47 +7,56 @@ import re
 import time
 import sys
 from datetime import datetime
+import base64
+import hashlib
 
-# YouTube Android Uygulamasının Gerçek Kimlik Bilgileri
+# YouTube Android Uygulamasının GÜNCEL Kimlik Bilgileri
 ANDROID_CLIENT = {
     'clientName': 'ANDROID',
-    'clientVersion': '19.09.37',  # Güncel bir sürüm
-    'androidSdkVersion': 33,
+    'clientVersion': '19.45.38',  # Güncel sürüm
+    'androidSdkVersion': 34,
     'osName': 'Android',
-    'osVersion': '13',
+    'osVersion': '14',
     'platform': 'MOBILE',
-    'userAgent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 13; TR) gzip',
-    'clientId': 3
+    'userAgent': 'com.google.android.youtube/19.45.38 (Linux; U; Android 14; TR) gzip',
+    'clientId': '3'  # String olmalı
 }
 
-# Google Play Store İmzası (YouTube uygulaması için)
-ANDROID_CERT = '24BB24C05A47ED07B1547F1FB2E5A14D8231FABF'
-PACKAGE_NAME = 'com.google.android.youtube'
+# YouTube API Anahtarı (Android uygulamasının kullandığı - DOĞRU OLAN)
+YOUTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
 
-# YouTube API Anahtarı (Android uygulamasının kullandığı)
-YOUTUBE_API_KEY = 'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w'
+
+def generate_android_signature():
+    """Android uygulama imzası oluştur (gerçekçi)"""
+    # Gerçek bir YouTube uygulaması imzası
+    return '24BB24C05A47ED07B1547F1FB2E5A14D8231FABF'
 
 
 def get_hls_from_youtube(video_id):
     """
     Bir YouTube canlı yayınından HLS bağlantısını alır.
-    Bu fonksiyon, YouTube Android uygulamasının kimliğine bürünerek en istikrarlı sonucu verir.
+    Android uygulaması kimliğiyle - DÜZELTİLMİŞ VERSİYON
     """
     
-    # Android uygulamasını taklit eden header'lar
+    # Doğru API endpoint'i
+    api_url = 'https://www.youtube.com/youtubei/v1/player'
+    
+    # Android uygulamasını taklit eden header'lar (DÜZELTİLDİ)
     headers = {
         'User-Agent': ANDROID_CLIENT['userAgent'],
-        'Content-Type': 'application/json',
-        'X-Android-Package': PACKAGE_NAME,
-        'X-Android-Cert': ANDROID_CERT,
-        'X-YouTube-Client-Name': str(ANDROID_CLIENT['clientId']),
-        'X-YouTube-Client-Version': ANDROID_CLIENT['clientVersion'],
+        'Content-Type': 'application/json; charset=utf-8',
         'Accept': 'application/json',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+        'X-YouTube-Client-Name': ANDROID_CLIENT['clientId'],
+        'X-YouTube-Client-Version': ANDROID_CLIENT['clientVersion'],
+        'X-YouTube-Utc-Offset': '180',
+        'X-YouTube-Time-Zone': 'Europe/Istanbul',
+        'X-YouTube-Page-Label': 'youtube.android.player_20260305_01_RC00',
         'Connection': 'Keep-Alive',
         'Accept-Encoding': 'gzip'
     }
     
-    # Android uygulamasının göndereceği gerçekçi payload
+    # Android uygulamasının göndereceği gerçekçi payload (DÜZELTİLDİ)
     payload = {
         "videoId": video_id,
         "context": {
@@ -60,17 +69,11 @@ def get_hls_from_youtube(video_id):
                 "platform": ANDROID_CLIENT['platform'],
                 "hl": "tr",
                 "gl": "TR",
-                "utcOffsetMinutes": 180,
-                "deviceModel": "SM-A127F"  # Gerçek bir cihaz modeli
+                "timeZone": "Europe/Istanbul",
+                "utcOffsetMinutes": 180
             },
             "thirdParty": {
                 "embedUrl": "https://www.youtube.com"
-            }
-        },
-        "playbackContext": {
-            "contentPlaybackContext": {
-                "currentUrl": f"/watch?v={video_id}",
-                "html5Preference": "HTML5_PREF_WANTS"
             }
         },
         "racyCheckOk": True,
@@ -78,35 +81,49 @@ def get_hls_from_youtube(video_id):
     }
     
     try:
-        # API isteğini gönder
+        print(f"   📤 İstek gönderiliyor...")
+        
+        # API isteğini gönder (query string ile)
         response = requests.post(
-            f'https://www.youtube.com/youtubei/v1/player?key={YOUTUBE_API_KEY}',
+            f'{api_url}?key={YOUTUBE_API_KEY}',
             headers=headers,
             json=payload,
             timeout=15
         )
         
+        print(f"   📥 HTTP {response.status_code}")
+        
         # Cevabı kontrol et
         if response.status_code != 200:
-            print(f"  ⚠️ HTTP Hatası {response.status_code}")
+            print(f"   📄 Cevap (ilk 200): {response.text[:200]}")
             return None
             
         data = response.json()
         
         # Hata kontrolü
         if data.get('error'):
-            print(f"  ⚠️ API Hatası: {data['error'].get('message', 'Bilinmiyor')}")
+            print(f"   ⚠️ API Hatası: {data['error'].get('message', 'Bilinmiyor')}")
             return None
             
         # Canlı yayın mı?
         if not data.get('videoDetails', {}).get('isLive', False):
-            print(f"  ⚠️ Canlı yayın değil")
+            print(f"   ⚠️ Canlı yayın değil")
             return None
             
         # HLS URL'ini al
-        hls_url = data.get('streamingData', {}).get('hlsManifestUrl')
+        streaming_data = data.get('streamingData', {})
+        hls_url = streaming_data.get('hlsManifestUrl')
+        
         if not hls_url:
-            print(f"  ⚠️ HLS URL bulunamadı")
+            # Alternatif: formats içinde ara
+            formats = streaming_data.get('formats', [])
+            for fmt in formats:
+                if 'hls' in fmt.get('url', ''):
+                    hls_url = fmt.get('url')
+                    break
+        
+        if not hls_url:
+            print(f"   ⚠️ HLS URL bulunamadı")
             return None
             
         # hls_variant -> hls_playlist dönüşümü (EN KRİTİK ADIM)
@@ -122,16 +139,17 @@ def get_hls_from_youtube(video_id):
         return hls_url
         
     except requests.exceptions.Timeout:
-        print(f"  ⚠️ Zaman aşımı")
+        print(f"   ⚠️ Zaman aşımı")
         return None
     except requests.exceptions.RequestException as e:
-        print(f"  ⚠️ Bağlantı hatası: {str(e)}")
+        print(f"   ⚠️ Bağlantı hatası: {str(e)}")
         return None
-    except json.JSONDecodeError:
-        print(f"  ⚠️ Geçersiz JSON cevabı")
+    except json.JSONDecodeError as e:
+        print(f"   ⚠️ Geçersiz JSON: {str(e)}")
+        print(f"   📄 Cevap (ilk 200): {response.text[:200]}")
         return None
     except Exception as e:
-        print(f"  ⚠️ Beklenmeyen hata: {str(e)}")
+        print(f"   ⚠️ Beklenmeyen hata: {str(e)}")
         return None
 
 
@@ -168,20 +186,21 @@ def generate_m3u():
         
         print(f"\n📺 [{idx}/{total}] {name}")
         print(f"   ID: {video_id}")
+        print(f"   Logo: {logo[:50]}...")
         
         hls_url = get_hls_from_youtube(video_id)
         
         if hls_url:
             m3u_content.append(f'\n#EXTINF:-1 tvg-id="{video_id}" tvg-name="{name}" tvg-logo="{logo}" group-title="Canlı TV",{name}')
             m3u_content.append(hls_url)
-            print(f"   ✅ HLS alındı")
+            print(f"   ✅ HLS alındı: {hls_url[:100]}...")
             success_count += 1
         else:
             print(f"   ❌ Başarısız")
         
-        # YouTube'a saygı: Her istek arasında 2-3 saniye bekle (ÇOK ÖNEMLİ!)
-        if idx < total:  # Son istekten sonra bekleme
-            wait_time = 2 + (idx % 2)  # 2 veya 3 saniye
+        # YouTube'a saygı: Her istek arasında 3-5 saniye bekle
+        if idx < total:
+            wait_time = 3 + (idx % 3)
             print(f"   ⏳ {wait_time} saniye bekleniyor...")
             time.sleep(wait_time)
     
@@ -192,9 +211,20 @@ def generate_m3u():
     print(f"\n📊 ÖZET: {success_count}/{total} kanal başarılı")
     print(f"📁 Çıktı: youtube.m3u")
     
+    # Başarısız kanallar varsa uyarı
+    if success_count < total:
+        print(f"⚠️ {total - success_count} kanal alınamadı!")
+    
     return success_count > 0
 
 
 if __name__ == '__main__':
+    print("🚀 YouTube M3U Generator Başlatılıyor...")
     success = generate_m3u()
-    sys.exit(0 if success else 1)
+    
+    if success:
+        print("\n✅ İşlem tamamlandı!")
+        sys.exit(0)
+    else:
+        print("\n❌ İşlem başarısız!")
+        sys.exit(1)
