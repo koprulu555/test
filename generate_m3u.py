@@ -5,7 +5,6 @@ import requests
 import json
 import time
 import sys
-import uuid
 import random
 from datetime import datetime
 
@@ -19,30 +18,17 @@ class YouTubeAndroidClient:
         self.os_version = '14'
         self.platform = 'MOBILE'
         self.device_model = 'SM-A127F'
-        self.device_brand = 'samsung'
-        self.device_manufacturer = 'samsung'
         
-        # Rastgele ama gerçekçi değerler üret
+        # Rastgele device ID üret
         self.device_id = self._generate_device_id()
-        self.adapter_info = self._generate_adapter_info()
-        self.adapter_info_hash = self._hash_string(self.adapter_info)
         
     def _generate_device_id(self):
         """Android cihaz ID'si formatında rastgele ID üret"""
-        return ''.join(random.choices('0123456789abcdef', k=16))
-    
-    def _generate_adapter_info(self):
-        """Gerçekçi adapter info üret"""
-        adapters = ['WIFI', 'MOBILE', 'ETHERNET']
-        return random.choice(adapters)
-    
-    def _hash_string(self, s):
-        """String hash'le"""
-        import hashlib
-        return hashlib.md5(s.encode()).hexdigest()
+        import uuid
+        return str(uuid.uuid4()).replace('-', '')[:16]
     
     def get_headers(self):
-        """Android uygulamasının gönderdiği TÜM header'lar"""
+        """Android uygulamasının gönderdiği header'lar"""
         return {
             'User-Agent': f'com.google.android.youtube/{self.client_version} (Linux; U; Android {self.os_version}; {self.device_model})',
             'Content-Type': 'application/json; charset=utf-8',
@@ -51,34 +37,13 @@ class YouTubeAndroidClient:
             'Accept-Encoding': 'gzip, deflate',
             'X-YouTube-Client-Name': '3',  # ANDROID = 3
             'X-YouTube-Client-Version': self.client_version,
-            'X-YouTube-Device': f'DEVICE_TYPE_PHONE',
-            'X-YouTube-Device-Model': self.device_model,
-            'X-YouTube-Device-Brand': self.device_brand,
-            'X-YouTube-Device-Manufacturer': self.device_manufacturer,
             'X-YouTube-Utc-Offset': '180',
             'X-YouTube-Time-Zone': 'Europe/Istanbul',
-            'X-YouTube-Ad-Signals': self._generate_ad_signals(),
-            'X-YouTube-Adapter-Info': self.adapter_info,
-            'X-YouTube-Adapter-Info-Hash': self.adapter_info_hash,
-            'X-YouTube-Device-ID': self.device_id,
-            'X-YouTube-Device-ID-Hash': self._hash_string(self.device_id),
-            'Connection': 'Keep-Alive',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
+            'Connection': 'Keep-Alive'
         }
-    
-    def _generate_ad_signals(self):
-        """Reklam sinyalleri üret"""
-        import base64
-        signals = {
-            'session_id': str(uuid.uuid4()),
-            'timestamp': int(time.time()),
-            'random': random.randint(1000, 9999)
-        }
-        return base64.b64encode(json.dumps(signals).encode()).decode()
     
     def get_payload(self, video_id):
-        """Android uygulamasının gönderdiği TÜM payload"""
+        """Android uygulamasının gönderdiği payload - DÜZELTİLDİ"""
         return {
             "videoId": video_id,
             "context": {
@@ -93,51 +58,18 @@ class YouTubeAndroidClient:
                     "gl": "TR",
                     "timeZone": "Europe/Istanbul",
                     "utcOffsetMinutes": 180,
-                    "deviceModel": self.device_model,
-                    "deviceBrand": self.device_brand,
-                    "deviceManufacturer": self.device_manufacturer
+                    "deviceModel": self.device_model
                 },
                 "user": {
                     "lockedSafetyMode": False
                 },
                 "request": {
                     "useSsl": True
-                },
-                "thirdParty": {
-                    "embedUrl": "https://www.youtube.com"
-                },
-                "adSignalsInfo": {
-                    "params": [
-                        {
-                            "key": "mt_op",
-                            "value": "1"
-                        },
-                        {
-                            "key": "mt_op",
-                            "value": "1"
-                        }
-                    ]
                 }
             },
             "racyCheckOk": True,
-            "contentCheckOk": True,
-            "playbackContext": {
-                "contentPlaybackContext": {
-                    "currentUrl": f"/watch?v={video_id}",
-                    "html5Preference": "HTML5_PREF_WANTS",
-                    "lactMilliseconds": str(random.randint(10000, 60000)),
-                    "autoplay": True,
-                    "autonavState": "AUTONAV_STATE_OFF"
-                }
-            },
-            "cpn": self._generate_cpn()
+            "contentCheckOk": True
         }
-    
-    def _generate_cpn(self):
-        """Rastgele CPN (Client Playback Nonce) üret"""
-        import random
-        import string
-        return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 
 
 # YouTube API Anahtarı
@@ -222,7 +154,6 @@ def generate_m3u():
         print("❌ ids.txt boş!")
         return False
     
-    # Her kanal için yeni bir client oluştur (farklı device ID ile)
     m3u_content = ['#EXTM3U']
     success_count = 0
     total = len(lines)
@@ -239,7 +170,7 @@ def generate_m3u():
         print(f"\n📺 [{idx}/{total}] {name}")
         print(f"   ID: {video_id}")
         
-        # Her kanal için yeni client oluştur (farklı device ID)
+        # Her kanal için yeni client
         client = YouTubeAndroidClient()
         hls_url = get_hls_from_youtube(video_id, client)
         
@@ -251,11 +182,10 @@ def generate_m3u():
         else:
             print(f"   ❌ BAŞARISIZ")
         
-        # Her kanal arasında 5-8 saniye bekle
+        # Her kanal arasında 5 saniye bekle
         if idx < total:
-            wait_time = random.randint(5, 8)
-            print(f"   ⏳ {wait_time} saniye bekleniyor...")
-            time.sleep(wait_time)
+            print(f"   ⏳ 5 saniye bekleniyor...")
+            time.sleep(5)
     
     # M3U dosyasını yaz
     with open('youtube.m3u', 'w', encoding='utf-8') as f:
