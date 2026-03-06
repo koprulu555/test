@@ -3,56 +3,108 @@
 
 import requests
 import json
+import re
 import time
 import sys
 import random
 from datetime import datetime
+import base64
 
-# YouTube'un FARKLI API KEY'leri (hepsi denenmeli)
-YOUTUBE_API_KEYS = [
-    'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',  # Web client
-    'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',  # Android client
-    'AIzaSyDCU8hxkR5BqB2CvNbI5sxr8bR1V75Iwhg',  # iOS client
-    'AIzaSyC1VbHlE1R9Q3yR5sW3jK8tL2mN4pX7vZ',   # YouTube Studio
-    'AIzaSyBk0qGqLjE9Q8rY5tW2uK7pL4mN6oX8vA',   # YouTube Music
-    'AIzaSyA2qB4rC6dE8fG0hI2jK4lM6nO8pQ0rS',   # YouTube Kids
-]
-
-
-class YouTubeAndroidClient:
+class YouTubeDynamicClient:
+    """
+    YouTube'un InnerTube API'sinden canlı olarak client bilgilerini çeker
+    """
+    
     def __init__(self):
-        self.client_name = 'ANDROID'
-        self.client_version = '19.45.38'
-        self.android_sdk_version = 34
-        self.os_name = 'Android'
-        self.os_version = '14'
-        self.platform = 'MOBILE'
-        self.device_model = 'SM-A127F'
+        self.base_js_url = "https://www.youtube.com/s/player/"
+        self.client_name = "ANDROID"
+        self.client_version = None
+        self.api_key = None
+        self.device_model = "SM-A127F"
         
+    def fetch_latest_config(self):
+        """
+        YouTube'un en son player config'inden API key ve client version'ı çeker
+        """
+        try:
+            # Önce ana sayfadan player JS path'ini bul
+            homepage = requests.get(
+                "https://www.youtube.com",
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout=10
+            )
+            
+            # player js dosyasının yolunu bul
+            player_js_pattern = r'src="(/s/player/[^"]+base\.js)"'
+            player_js_match = re.search(player_js_pattern, homepage.text)
+            
+            if not player_js_match:
+                print("   ⚠️ Player JS bulunamadı")
+                return False
+                
+            player_js_url = f"https://www.youtube.com{player_js_match.group(1)}"
+            
+            # Player JS dosyasını çek
+            player_js = requests.get(player_js_url, timeout=10)
+            
+            # API key'i bul (youtubei.googleapis.com key'i)
+            api_key_pattern = r'key="([^"]+)"'
+            api_keys = re.findall(api_key_pattern, player_js.text)
+            
+            if api_keys:
+                # En uzun key'i al (genelde doğru olan)
+                self.api_key = max(set(api_keys), key=len)
+                print(f"   🔑 API Key bulundu: {self.api_key[:10]}...")
+            else:
+                print("   ⚠️ API Key bulunamadı")
+                return False
+            
+            # Client version'ı bul
+            version_pattern = r'INNERTUBE_CONTEXT_CLIENT_VERSION":"([^"]+)"'
+            version_match = re.search(version_pattern, player_js.text)
+            
+            if version_match:
+                self.client_version = version_match.group(1)
+                print(f"   📱 Client Version: {self.client_version}")
+            else:
+                # Fallback version
+                self.client_version = "19.45.38"
+                print(f"   ⚠️ Fallback version: {self.client_version}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"   ⚠️ Config çekme hatası: {str(e)}")
+            return False
+    
     def get_headers(self):
-        """Android uygulamasının header'ları"""
+        """Android uygulaması header'ları"""
         return {
-            'User-Agent': f'com.google.android.youtube/{self.client_version} (Linux; U; Android {self.os_version}; {self.device_model})',
+            'User-Agent': f'com.google.android.youtube/{self.client_version} (Linux; U; Android 14; {self.device_model})',
             'Content-Type': 'application/json; charset=utf-8',
             'Accept': 'application/json',
             'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
             'X-YouTube-Client-Name': '3',
             'X-YouTube-Client-Version': self.client_version,
+            'X-YouTube-Utc-Offset': '180',
+            'X-YouTube-Time-Zone': 'Europe/Istanbul',
             'Connection': 'Keep-Alive'
         }
     
     def get_payload(self, video_id):
-        """Basit ama çalışan payload"""
+        """Minimal ama çalışan payload"""
         return {
             "videoId": video_id,
             "context": {
                 "client": {
                     "clientName": self.client_name,
                     "clientVersion": self.client_version,
-                    "androidSdkVersion": self.android_sdk_version,
-                    "osName": self.os_name,
-                    "osVersion": self.os_version,
-                    "platform": self.platform,
+                    "androidSdkVersion": 34,
+                    "osName": "Android",
+                    "osVersion": "14",
+                    "platform": "MOBILE",
                     "hl": "tr",
                     "gl": "TR"
                 }
@@ -62,64 +114,54 @@ class YouTubeAndroidClient:
         }
 
 
-def try_all_api_keys(video_id, client):
-    """
-    Tüm API key'lerini dene
-    """
-    for idx, api_key in enumerate(YOUTUBE_API_KEYS, 1):
-        print(f"   🔑 API Key {idx}/{len(YOUTUBE_API_KEYS)} deneniyor...")
-        
-        try:
-            response = requests.post(
-                f'https://www.youtube.com/youtubei/v1/player?key={api_key}',
-                headers=client.get_headers(),
-                json=client.get_payload(video_id),
-                timeout=10
-            )
-            
-            print(f"      HTTP {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Video canlı mı?
-                if data.get('videoDetails', {}).get('isLive'):
-                    hls_url = data.get('streamingData', {}).get('hlsManifestUrl')
-                    if hls_url:
-                        print(f"      ✅ Başarılı!")
-                        return hls_url
-                
-            elif response.status_code == 400:
-                # Hata mesajını kontrol et
-                error_data = response.json()
-                error_msg = error_data.get('error', {}).get('message', '')
-                
-                # "Precondition" hatası devam ediyorsa diğer key'i dene
-                if 'Precondition' in error_msg:
-                    print(f"      ⚠️ Precondition hatası, diğer key deneniyor...")
-                    continue
-                    
-        except Exception as e:
-            print(f"      ⚠️ Hata: {str(e)}")
-            continue
-            
-        # 200 döndü ama HLS yoksa veya başka bir hata varsa
-        time.sleep(1)
-    
-    return None
-
-
 def get_hls_from_youtube(video_id):
     """
-    YouTube canlı yayınından HLS bağlantısını al
+    YouTube canlı yayınından HLS bağlantısını al - Dinamik API key ile
     """
-    client = YouTubeAndroidClient()
-    print(f"   📱 Cihaz: {client.device_model} (Android {client.os_version})")
     
-    # Tüm API key'lerini dene
-    hls_url = try_all_api_keys(video_id, client)
+    # Her kanal için yeni client oluştur
+    client = YouTubeDynamicClient()
     
-    if hls_url:
+    print(f"   🔍 YouTube config çekiliyor...")
+    if not client.fetch_latest_config():
+        print("   ❌ Config alınamadı")
+        return None
+    
+    if not client.api_key:
+        print("   ❌ API key alınamadı")
+        return None
+    
+    print(f"   📤 İstek gönderiliyor...")
+    print(f"   📱 Client: {client.client_name} v{client.client_version}")
+    
+    try:
+        response = requests.post(
+            f'https://www.youtube.com/youtubei/v1/player?key={client.api_key}',
+            headers=client.get_headers(),
+            json=client.get_payload(video_id),
+            timeout=15
+        )
+        
+        print(f"   📥 HTTP {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"   📄 Hata: {response.text[:200]}")
+            return None
+        
+        data = response.json()
+        
+        # Video canlı mı?
+        if not data.get('videoDetails', {}).get('isLive', False):
+            print(f"   ⚠️ Video canlı değil")
+            return None
+        
+        # HLS URL'ini al
+        hls_url = data.get('streamingData', {}).get('hlsManifestUrl')
+        
+        if not hls_url:
+            print(f"   ⚠️ HLS URL bulunamadı")
+            return None
+        
         # hls_variant -> hls_playlist dönüşümü
         hls_url = hls_url.replace('hls_variant', 'hls_playlist')
         hls_url = hls_url.replace('&', '/')
@@ -131,8 +173,10 @@ def get_hls_from_youtube(video_id):
             hls_url += '/ratebypass/yes'
         
         return hls_url
-    
-    return None
+        
+    except Exception as e:
+        print(f"   ⚠️ Hata: {str(e)}")
+        return None
 
 
 def generate_m3u():
@@ -179,10 +223,11 @@ def generate_m3u():
         else:
             print(f"   ❌ BAŞARISIZ")
         
-        # Her kanal arasında 5 saniye bekle
+        # Her kanal arasında 8-12 saniye bekle (YouTube'u yormamak için)
         if idx < total:
-            print(f"   ⏳ 5 saniye bekleniyor...")
-            time.sleep(5)
+            wait_time = random.randint(8, 12)
+            print(f"   ⏳ {wait_time} saniye bekleniyor...")
+            time.sleep(wait_time)
     
     # M3U dosyasını yaz
     with open('youtube.m3u', 'w', encoding='utf-8') as f:
@@ -195,7 +240,7 @@ def generate_m3u():
 
 
 if __name__ == '__main__':
-    print("🚀 YouTube M3U Generator Başlatılıyor...")
+    print("🚀 YouTube M3U Generator (Dinamik API Key) Başlatılıyor...")
     success = generate_m3u()
     
     if success:
