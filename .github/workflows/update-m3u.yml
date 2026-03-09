@@ -2,9 +2,8 @@ name: YouTube M3U Güncelle
 
 on:
   schedule:
-    # Her 3 saatte bir çalış (Türkiye saatiyle 03:00, 06:00, ...)
-    - cron: '0 */3 * * *'
-  workflow_dispatch:  # Manuel çalıştırma için
+    - cron: '0 */3 * * *'  # Her 3 saatte bir
+  workflow_dispatch:
 
 jobs:
   update-m3u:
@@ -21,9 +20,14 @@ jobs:
       with:
         python-version: '3.10'
         
-    - name: 📦 Python paketlerini yükle
+    - name: 📦 pip'i güncelle
       run: |
-        pip install requests
+        python -m pip install --upgrade pip
+        
+    - name: 📚 Gereksinimleri yükle
+      run: |
+        # requirements.txt'deki tüm paketleri yükle
+        pip install -r requirements.txt
         
     - name: 🎬 M3U dosyasını oluştur
       run: |
