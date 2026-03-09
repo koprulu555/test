@@ -26,14 +26,16 @@ jobs:
         
     - name: 📚 Gereksinimleri yükle
       run: |
-        pip install -r requirements.txt
+        pip install yt-dlp requests
         
-    - name: 🎬 PO Token sunucusunu başlat (arka planda)
+    - name: 🐳 Docker kurulumu
+      uses: docker/setup-buildx-action@v2
+      
+    - name: 🎬 PO Token sunucusunu başlat
       run: |
-        # PO Token provider'ı Docker ile başlat
         docker run --name bgutil-provider -d -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider:latest
-        # Sunucunun hazır olmasını bekle
-        sleep 5
+        echo "PO Token sunucusu başlatıldı, hazır olması bekleniyor..."
+        sleep 10
         
     - name: 🎥 M3U dosyasını oluştur
       run: |
