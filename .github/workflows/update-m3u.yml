@@ -2,8 +2,8 @@ name: YouTube M3U Güncelle
 
 on:
   schedule:
-    - cron: '0 */3 * * *'  # Her 3 saatte bir
-  workflow_dispatch:
+    - cron: '0 */3 * * *'  # Her 3 saatte bir (Türkiye saatiyle 03:00, 06:00, ...)
+  workflow_dispatch:        # Manuel çalıştırma için
 
 jobs:
   update-m3u:
@@ -20,33 +20,14 @@ jobs:
       with:
         python-version: '3.10'
         
-    - name: 📦 pip'i güncelle
+    - name: 📦 yt-dlp-ytse kurulumu
       run: |
         python -m pip install --upgrade pip
-        
-    - name: 📚 Gereksinimleri yükle
-      run: |
-        pip install yt-dlp requests
-        
-    - name: 🐳 Docker kurulumu
-      uses: docker/setup-buildx-action@v2
-      
-    - name: 🎬 PO Token sunucusunu başlat
-      run: |
-        docker run --name bgutil-provider -d -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider:latest
-        echo "PO Token sunucusu başlatıldı, hazır olması bekleniyor..."
-        sleep 15
-        docker logs bgutil-provider --tail 10
+        pip install -U yt-dlp-ytse
         
     - name: 🎥 M3U dosyasını oluştur
       run: |
         python generate_m3u.py
-        
-    - name: 🛑 PO Token sunucusunu durdur
-      if: always()
-      run: |
-        docker stop bgutil-provider || true
-        docker rm bgutil-provider || true
         
     - name: 🔍 Değişiklikleri kontrol et
       id: git-check
