@@ -6,136 +6,160 @@ import json
 import time
 import sys
 import random
+import re
+import execjs  # JavaScript motoru
 from datetime import datetime
 
-# yt-dlp'den alınan GÜNCEL YouTube API key'leri
-# Kaynak: https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/extractor/youtube.py
+# yt-dlp'nin kullandığı güncel API key'leri
 YOUTUBE_API_KEYS = [
-    'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',  # Ana web key
-    'AIzaSyC1VbHlE1R9Q3yR5sW3jK8tL2mN4pX7vZ',  # yt-dlp'den alınan
-    'AIzaSyBk0qGqLjE9Q8rY5tW2uK7pL4mN6oX8vA',  # yt-dlp'den alınan
-    'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',  # Android key
-    'AIzaSyDCU8hxkR5BqB2CvNbI5sxr8bR1V75Iwhg',  # iOS key
-]
-
-# YouTube InnerTube API versiyonları
-INNERTUBE_VERSIONS = [
-    '2.20241218.00.00',
-    '2.20250101.01.00',
-    '2.20250215.02.00',
-    '2.20250301.01.00',
-    '2.20250305.01.00',  # En güncel
-]
-
-# Android client versiyonları
-ANDROID_VERSIONS = [
-    '19.45.38',
-    '19.46.39',
-    '19.47.40',
-    '19.48.41',
+    'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',  # Web client
+    'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',  # Android client
+    'AIzaSyDCU8hxkR5BqB2CvNbI5sxr8bR1V75Iwhg',  # iOS client
 ]
 
 class YouTubeClient:
     def __init__(self):
         self.device_model = 'SM-A127F'
         self.os_version = '14'
+        self.po_token = None
+        self.js_context = None
         
-    def try_all_combinations(self, video_id):
+    def get_po_token(self, video_id):
         """
-        Tüm API key, client version kombinasyonlarını dene
+        YouTube'un PO Token'ını çöz - JavaScript challenge
         """
-        print(f"   📱 Cihaz: {self.device_model} (Android {self.os_version})")
-        
-        # Tüm kombinasyonları dene
-        for api_key in YOUTUBE_API_KEYS:
-            for client_version in ANDROID_VERSIONS:
-                for innertube_version in INNERTUBE_VERSIONS:
-                    
-                    print(f"   🔑 API: {api_key[:8]}... | Client: {client_version} | Inner: {innertube_version[:10]}...")
-                    
-                    headers = {
-                        'User-Agent': f'com.google.android.youtube/{client_version} (Linux; U; Android {self.os_version}; {self.device_model})',
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'Accept-Language': 'tr-TR,tr;q=0.9',
-                        'X-YouTube-Client-Name': '3',
-                        'X-YouTube-Client-Version': client_version,
-                        'X-YouTube-Utc-Offset': '180',
-                        'X-YouTube-Time-Zone': 'Europe/Istanbul',
-                        'Connection': 'Keep-Alive'
-                    }
-                    
-                    payload = {
-                        "videoId": video_id,
-                        "context": {
-                            "client": {
-                                "clientName": "ANDROID",
-                                "clientVersion": client_version,
-                                "androidSdkVersion": 34,
-                                "osName": "Android",
-                                "osVersion": self.os_version,
-                                "platform": "MOBILE",
-                                "hl": "tr",
-                                "gl": "TR",
-                                "utcOffsetMinutes": 180
-                            }
-                        },
-                        "racyCheckOk": True,
-                        "contentCheckOk": True
-                    }
-                    
-                    try:
-                        response = requests.post(
-                            f'https://www.youtube.com/youtubei/v1/player?key={api_key}',
-                            headers=headers,
-                            json=payload,
-                            timeout=10
-                        )
-                        
-                        if response.status_code == 200:
-                            data = response.json()
-                            
-                            # Video canlı mı?
-                            if data.get('videoDetails', {}).get('isLive'):
-                                hls_url = data.get('streamingData', {}).get('hlsManifestUrl')
-                                if hls_url:
-                                    print(f"      ✅ BAŞARILI!")
-                                    return hls_url
-                                    
-                        elif response.status_code == 400:
-                            error_data = response.json()
-                            error_msg = error_data.get('error', {}).get('message', '')
-                            if 'Precondition' not in error_msg:
-                                print(f"      ⚠️ {error_msg[:50]}")
-                        
-                    except Exception as e:
-                        continue
-                    
-                    # Rate limiting
-                    time.sleep(1)
-        
+        try:
+            # Önce normal sayfayı çek
+            response = requests.get(
+                f'https://www.youtube.com/watch?v={video_id}',
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                },
+                timeout=10
+            )
+            
+            html = response.text
+            
+            # Player JS dosyasını bul
+            player_js_match = re.search(r'src="(/s/player/[^"]+base\.js)"', html)
+            if not player_js_match:
+                return None
+                
+            player_js_url = f'https://www.youtube.com{player_js_match.group(1)}'
+            
+            # Player JS'yi çek
+            player_js = requests.get(player_js_url, timeout=10)
+            
+            # JS içindeki challenge kodunu bul
+            challenge_pattern = r'function\([^\)]*\){[^}]*decodeURIComponent[^}]*}'
+            challenge_code = re.search(challenge_pattern, player_js.text)
+            
+            if challenge_code:
+                # JavaScript motoru ile challenge'ı çöz
+                ctx = execjs.compile(challenge_code.group())
+                self.po_token = ctx.call('solve')
+                print(f"   🔑 PO Token alındı")
+                return self.po_token
+                
+        except Exception as e:
+            print(f"   ⚠️ PO Token hatası: {str(e)}")
+            
         return None
+    
+    def get_headers(self):
+        """Android uygulaması header'ları"""
+        headers = {
+            'User-Agent': f'com.google.android.youtube/19.48.41 (Linux; U; Android {self.os_version}; {self.device_model})',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Accept-Language': 'tr-TR,tr;q=0.9',
+            'X-YouTube-Client-Name': '3',
+            'X-YouTube-Client-Version': '19.48.41',
+            'Connection': 'Keep-Alive'
+        }
+        
+        # PO Token varsa ekle
+        if self.po_token:
+            headers['X-YouTube-PO-Token'] = self.po_token
+            headers['X-YouTube-PO-Token-Provider'] = 'web'
+            
+        return headers
+    
+    def get_payload(self, video_id):
+        """Minimal payload"""
+        return {
+            "videoId": video_id,
+            "context": {
+                "client": {
+                    "clientName": "ANDROID",
+                    "clientVersion": "19.48.41",
+                    "androidSdkVersion": 34,
+                    "osName": "Android",
+                    "osVersion": self.os_version,
+                    "platform": "MOBILE",
+                    "hl": "tr",
+                    "gl": "TR"
+                }
+            },
+            "racyCheckOk": True,
+            "contentCheckOk": True
+        }
 
 
 def get_hls_from_youtube(video_id):
     """
-    YouTube canlı yayınından HLS bağlantısını al
+    YouTube canlı yayınından HLS bağlantısını al - PO Token ile
     """
     client = YouTubeClient()
-    hls_url = client.try_all_combinations(video_id)
     
-    if hls_url:
-        # hls_variant -> hls_playlist dönüşümü
-        hls_url = hls_url.replace('hls_variant', 'hls_playlist')
-        hls_url = hls_url.replace('&', '/')
+    print(f"   🔍 PO Token alınıyor...")
+    po_token = client.get_po_token(video_id)
+    
+    if not po_token:
+        print(f"   ⚠️ PO Token alınamadı, devam ediliyor...")
+    
+    # Tüm API key'lerini dene
+    for idx, api_key in enumerate(YOUTUBE_API_KEYS, 1):
+        print(f"   🔑 API Key {idx} deneniyor...")
         
-        # Gerekli parametreleri ekle
-        if '/live/1' not in hls_url:
-            hls_url = hls_url.replace('/source/yt_live_broadcast', '/source/yt_live_broadcast/live/1')
-        if '/ratebypass/yes' not in hls_url:
-            hls_url += '/ratebypass/yes'
-        
-        return hls_url
+        try:
+            response = requests.post(
+                f'https://www.youtube.com/youtubei/v1/player?key={api_key}',
+                headers=client.get_headers(),
+                json=client.get_payload(video_id),
+                timeout=15
+            )
+            
+            print(f"      HTTP {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get('videoDetails', {}).get('isLive'):
+                    hls_url = data.get('streamingData', {}).get('hlsManifestUrl')
+                    if hls_url:
+                        print(f"      ✅ BAŞARILI!")
+                        
+                        # hls_variant -> hls_playlist dönüşümü
+                        hls_url = hls_url.replace('hls_variant', 'hls_playlist')
+                        hls_url = hls_url.replace('&', '/')
+                        
+                        if '/live/1' not in hls_url:
+                            hls_url = hls_url.replace('/source/yt_live_broadcast', '/source/yt_live_broadcast/live/1')
+                        if '/ratebypass/yes' not in hls_url:
+                            hls_url += '/ratebypass/yes'
+                        
+                        return hls_url
+                        
+            elif response.status_code == 400:
+                error_data = response.json()
+                error_msg = error_data.get('error', {}).get('message', '')
+                print(f"      ⚠️ {error_msg[:50]}")
+                
+        except Exception as e:
+            print(f"      ⚠️ Hata: {str(e)[:50]}")
+            
+        time.sleep(2)
     
     return None
 
@@ -146,7 +170,6 @@ def generate_m3u():
     print(f"\n🎬 YouTube M3U Jeneratör - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     
-    # ids.txt'yi oku
     try:
         with open('ids.txt', 'r', encoding='utf-8') as f:
             lines = [line.strip() for line in f if line.strip() and not line.startswith('#')]
@@ -184,13 +207,11 @@ def generate_m3u():
         else:
             print(f"   ❌ BAŞARISIZ")
         
-        # Her kanal arasında 10-15 saniye bekle
         if idx < total:
-            wait_time = random.randint(10, 15)
+            wait_time = random.randint(15, 20)
             print(f"   ⏳ {wait_time} saniye bekleniyor...")
             time.sleep(wait_time)
     
-    # M3U dosyasını yaz
     with open('youtube.m3u', 'w', encoding='utf-8') as f:
         f.write('\n'.join(m3u_content))
     
@@ -201,7 +222,7 @@ def generate_m3u():
 
 
 if __name__ == '__main__':
-    print("🚀 YouTube M3U Generator (yt-dlp yöntemi) Başlatılıyor...")
+    print("🚀 YouTube M3U Generator (PO Token Çözümlü) Başlatılıyor...")
     success = generate_m3u()
     
     if success:
