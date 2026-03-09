@@ -6,145 +6,119 @@ import json
 import time
 import sys
 import os
-import glob
-import shutil
-import sqlite3
+import requests
 from datetime import datetime
 
-# YouTube API anahtarları (yt-dlp'den alınmıştır)
-YOUTUBE_API_KEYS = [
-    'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8',  # Web client
-    'AIzaSyA8eiZmM1FaDVjRy-df2KTyQ_vz_yYM39w',  # Android client
-    'AIzaSyDCU8hxkR5BqB2CvNbI5sxr8bR1V75Iwhg',  # iOS client
-]
-
-
-def extract_firefox_cookies():
+def get_po_token_from_provider():
     """
-    Firefox tarayıcısından YouTube cookie'lerini çıkar
-    Chrome artık çalışmıyor! (app-bound encryption)
+    bgutil-ytdlp-pot-provider'dan PO Token al
     """
     try:
-        # Firefox profil dizinini bul
-        if sys.platform == 'win32':
-            appdata = os.environ.get('APPDATA', '')
-            profiles_dir = os.path.join(appdata, 'Mozilla', 'Firefox', 'Profiles')
-        elif sys.platform == 'darwin':  # macOS
-            home = os.environ.get('HOME', '')
-            profiles_dir = os.path.join(home, 'Library', 'Application Support', 'Firefox', 'Profiles')
-        else:  # Linux
-            home = os.environ.get('HOME', '')
-            profiles_dir = os.path.join(home, '.mozilla', 'firefox')
-
-        if not os.path.exists(profiles_dir):
-            print("   ⚠️ Firefox profil dizini bulunamadı")
-            return None
-
-        # En son kullanılan profili bul
-        profile_dirs = glob.glob(os.path.join(profiles_dir, '*.default*'))
-        if not profile_dirs:
-            print("   ⚠️ Firefox profili bulunamadı")
-            return None
-
-        profile_dir = max(profile_dirs, key=os.path.getmtime)
-        cookies_db = os.path.join(profile_dir, 'cookies.sqlite')
-
-        if not os.path.exists(cookies_db):
-            print("   ⚠️ cookies.sqlite bulunamadı")
-            return None
-
-        # Veritabanını kopyala (Firefox kilitli olabilir)
-        temp_db = '/tmp/firefox_cookies.sqlite'
-        shutil.copy2(cookies_db, temp_db)
-
-        # SQLite'dan cookie'leri oku
-        conn = sqlite3.connect(temp_db)
-        cursor = conn.cursor()
-
-        # YouTube ve Google cookie'lerini al
-        cursor.execute("""
-            SELECT host, name, value, path, expiry, isSecure 
-            FROM moz_cookies 
-            WHERE host LIKE '%youtube%' OR host LIKE '%google%'
-        """)
-
-        cookies = cursor.fetchall()
-        conn.close()
-        os.remove(temp_db)
-
-        if not cookies:
-            print("   ⚠️ YouTube cookie'si bulunamadı")
-            return None
-
-        # Netscape formatında cookie dosyası oluştur
-        cookiefile = '/tmp/youtube_cookies.txt'
-        with open(cookiefile, 'w') as f:
-            f.write("# Netscape HTTP Cookie File\n")
-            for host, name, value, path, expiry, isSecure in cookies:
-                secure = 'TRUE' if isSecure else 'FALSE'
-                f.write(f"{host}\tTRUE\t{path}\t{secure}\t{expiry}\t{name}\t{value}\n")
-
-        print(f"   ✅ {len(cookies)} cookie alındı")
-        return cookiefile
-
+        # PO Token provider'a bağlan (localhost:4416)
+        response = requests.get(
+            'http://localhost:4416/token',
+            params={'visitor_data': generate_visitor_data()},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            po_token = data.get('poToken')
+            visitor_data = data.get('visitorData')
+            print(f"      ✅ PO Token alındı")
+            return po_token, visitor_data
+        else:
+            print(f"      ⚠️ PO Token provider hatası: {response.status_code}")
+            
+    except requests.exceptions.ConnectionError:
+        print(f"      ⚠️ PO Token provider bağlantı hatası (Docker çalışıyor mu?)")
     except Exception as e:
-        print(f"   ⚠️ Cookie çıkarma hatası: {str(e)}")
-        return None
+        print(f"      ⚠️ PO Token hatası: {str(e)}")
+    
+    return None, None
 
 
-def get_hls_with_ytdlp(video_id, cookiefile):
+def generate_visitor_data():
     """
-    yt-dlp ile YouTube canlı yayınından HLS bağlantısını al
+    Rastgele visitor data üret (YouTube'un istediği format)
+    """
+    import random
+    import string
+    import base64
+    
+    # 16 karakterlik rastgele ID
+    random_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
+    timestamp = int(time.time()) - random.randint(3600, 86400)
+    
+    # YouTube'un beklediği format
+    visitor_data = f"Cgt{random_id}Sj{timestamp}Dg=="
+    return visitor_data
+
+
+def get_hls_with_po_token(video_id):
+    """
+    PO Token ile YouTube canlı yayınından HLS bağlantısını al
     """
     try:
-        # PO Token plugin'ini aktif et
+        # PO Token al
+        po_token, visitor_data = get_po_token_from_provider()
+        
+        if not po_token:
+            print(f"      ⚠️ PO Token alınamadı")
+            return None
+        
+        # yt-dlp ile HLS URL'ini al (PO Token ile)
         cmd = [
             'yt-dlp',
             '--no-warnings',
             '--no-cache-dir',
-            '--extractor-args', 'youtubepot:provider=bgutil',
-            '--cookies', cookiefile,  # Firefox cookie'leri
+            '--extractor-args', f'youtubepot:po_token={po_token}:visitor_data={visitor_data}',
             '-g',  # Sadece URL'yi göster
             '-f', 'best',  # En iyi format
             f'https://www.youtube.com/watch?v={video_id}'
         ]
-
+        
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=30,
-            check=True
+            timeout=30
         )
-
-        # Çıktıyı kontrol et
-        output = result.stdout.strip()
-        if output and '.m3u8' in output:
-            print(f"      ✅ HLS URL alındı")
-            return output
+        
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            if output and '.m3u8' in output:
+                print(f"      ✅ HLS URL alındı")
+                return output
+            else:
+                print(f"      ⚠️ HLS URL bulunamadı")
         else:
-            print(f"      ⚠️ HLS URL bulunamadı: {output[:100]}")
-
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.lower() if e.stderr else ''
-        if 'sign in' in error_msg:
-            print(f"      ⚠️ YouTube oturum açmanızı istiyor. Firefox'a giriş yapın.")
-        elif 'pot token' in error_msg:
-            print(f"      ⚠️ PO Token hatası: {e.stderr[:100]}")
-        else:
-            print(f"      ⚠️ yt-dlp hatası: {e.stderr[:100]}")
+            error_msg = result.stderr.lower()
+            if 'po token' in error_msg or 'sign in' in error_msg:
+                print(f"      ⚠️ Yeni PO Token gerekiyor")
+            else:
+                print(f"      ⚠️ yt-dlp hatası: {result.stderr[:100]}")
+                
     except Exception as e:
         print(f"      ⚠️ Beklenmeyen hata: {str(e)}")
-
+    
     return None
 
 
 def generate_m3u():
     """Ana M3U dosyasını oluştur"""
-
+    
     print(f"\n🎬 YouTube M3U Jeneratör - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
-
+    
+    # PO Token provider'ın çalıştığını kontrol et
+    try:
+        requests.get('http://localhost:4416/health', timeout=2)
+        print(f"✅ PO Token provider çalışıyor")
+    except:
+        print(f"❌ PO Token provider çalışmıyor! Docker container'ı kontrol edin.")
+        return False
+    
     # ids.txt'yi oku
     try:
         with open('ids.txt', 'r', encoding='utf-8') as f:
@@ -152,37 +126,30 @@ def generate_m3u():
     except FileNotFoundError:
         print("❌ ids.txt bulunamadı!")
         return False
-
+    
     if not lines:
         print("❌ ids.txt boş!")
         return False
-
-    # Firefox cookie'lerini çıkar
-    print("\n🔑 Firefox cookie'leri alınıyor...")
-    cookiefile = extract_firefox_cookies()
-    if not cookiefile:
-        print("❌ Cookie alınamadı! Firefox'a YouTube'da giriş yapın.")
-        return False
-
+    
     m3u_content = ['#EXTM3U']
     success_count = 0
     total = len(lines)
-
+    
     for idx, line in enumerate(lines, 1):
         parts = line.split('|')
         if len(parts) != 3:
             print(f"⚠️ Geçersiz satır: {line}")
             continue
-
+        
         name, url, logo = parts
         video_id = url.split('=')[-1] if '=' in url else url
-
+        
         print(f"\n📺 [{idx}/{total}] {name}")
         print(f"   ID: {video_id}")
-
-        # yt-dlp ile HLS URL'ini al
-        hls_url = get_hls_with_ytdlp(video_id, cookiefile)
-
+        
+        # PO Token ile HLS URL'ini al
+        hls_url = get_hls_with_po_token(video_id)
+        
         if hls_url:
             m3u_content.append(f'\n#EXTINF:-1 tvg-id="{video_id}" tvg-name="{name}" tvg-logo="{logo}" group-title="Canlı TV",{name}')
             m3u_content.append(hls_url)
@@ -190,30 +157,26 @@ def generate_m3u():
             success_count += 1
         else:
             print(f"   ❌ BAŞARISIZ")
-
-        # Her kanal arasında 10 saniye bekle
+        
+        # Her kanal arasında 15 saniye bekle
         if idx < total:
-            print(f"   ⏳ 10 saniye bekleniyor...")
-            time.sleep(10)
-
+            print(f"   ⏳ 15 saniye bekleniyor...")
+            time.sleep(15)
+    
     # M3U dosyasını yaz
     with open('youtube.m3u', 'w', encoding='utf-8') as f:
         f.write('\n'.join(m3u_content))
-
+    
     print(f"\n📊 ÖZET: {success_count}/{total} kanal başarılı")
     print(f"📁 Çıktı: youtube.m3u")
-
-    # Geçici cookie dosyasını temizle
-    if os.path.exists('/tmp/youtube_cookies.txt'):
-        os.remove('/tmp/youtube_cookies.txt')
-
+    
     return success_count > 0
 
 
 if __name__ == '__main__':
-    print("🚀 YouTube M3U Generator (Cookie + PO Token) Başlatılıyor...")
+    print("🚀 YouTube M3U Generator (PO Token Provider) Başlatılıyor...")
     success = generate_m3u()
-
+    
     if success:
         print("\n✅ İşlem tamamlandı!")
         sys.exit(0)
