@@ -35,7 +35,8 @@ jobs:
       run: |
         docker run --name bgutil-provider -d -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider:latest
         echo "PO Token sunucusu başlatıldı, hazır olması bekleniyor..."
-        sleep 10
+        sleep 15
+        docker logs bgutil-provider --tail 10
         
     - name: 🎥 M3U dosyasını oluştur
       run: |
