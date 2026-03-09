@@ -26,12 +26,24 @@ jobs:
         
     - name: 📚 Gereksinimleri yükle
       run: |
-        # requirements.txt'deki tüm paketleri yükle
         pip install -r requirements.txt
         
-    - name: 🎬 M3U dosyasını oluştur
+    - name: 🎬 PO Token sunucusunu başlat (arka planda)
+      run: |
+        # PO Token provider'ı Docker ile başlat
+        docker run --name bgutil-provider -d -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider:latest
+        # Sunucunun hazır olmasını bekle
+        sleep 5
+        
+    - name: 🎥 M3U dosyasını oluştur
       run: |
         python generate_m3u.py
+        
+    - name: 🛑 PO Token sunucusunu durdur
+      if: always()
+      run: |
+        docker stop bgutil-provider || true
+        docker rm bgutil-provider || true
         
     - name: 🔍 Değişiklikleri kontrol et
       id: git-check
