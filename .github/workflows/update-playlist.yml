@@ -1,0 +1,46 @@
+name: YouTube Playlist Güncelleyici
+
+on:
+  schedule:
+    # Her 5 saatte bir çalış (tecotv saatlik yapmış, biz 5 saatte bir yapalım)
+    - cron: '0 */5 * * *'
+  workflow_dispatch:  # Manuel tetikleme için
+
+jobs:
+  update-playlist:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Repo'yu çek
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: 🔧 Gerekli araçları yükle
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl
+        # jq ve curl zaten var, ama emin olalım
+    
+    - name: 🚀 Playlist'i güncelle
+      run: |
+        chmod +x update-playlist.sh
+        ./update-playlist.sh
+      env:
+        GITHUB_REPOSITORY: ${{ github.repository }}
+    
+    - name: 📤 Değişiklikleri push et
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Değişiklik var mı kontrol et
+        if [ -n "$(git status --porcelain)" ]; then
+          git add .
+          git commit -m "🔄 Playlist otomatik güncelleme - $(date '+%d.%m.%Y %H:%M')"
+          git push
+          echo "✅ Değişiklikler push edildi"
+        else
+          echo "ℹ️ Değişiklik yok, push atlandı"
+        fi
