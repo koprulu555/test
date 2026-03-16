@@ -1,7 +1,7 @@
 [
   {
     "name": "TRT 1",
-    "url": "https://www.youtube.com/watch?v=VIDEO_ID_1",
+    "url": "https://api.codetabs.com/v1/proxy/?quest=https://www.youtube.com/watch?v=VIDEO_ID_1",
     "category": "ulusal"
   },
   {
